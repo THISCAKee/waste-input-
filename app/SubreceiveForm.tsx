@@ -81,9 +81,8 @@ export default function SubreceiveForm() {
   const [modalFiscalYear, setModalFiscalYear] = useState("");
 
   // --- Month Search State ---
-  const [selectedMonth, setSelectedMonth] = useState("");
+  const [selectedMonths, setSelectedMonths] = useState<string[]>([]);
   const [monthSearchTerm, setMonthSearchTerm] = useState("");
-  const [isMonthDropdownOpen, setIsMonthDropdownOpen] = useState(false);
   const monthDropdownRef = useRef<HTMLDivElement>(null);
 
   // --- Fetch Data ---
@@ -120,12 +119,6 @@ export default function SubreceiveForm() {
       ) {
         setIsDropdownOpen(false);
       }
-      if (
-        monthDropdownRef.current &&
-        !monthDropdownRef.current.contains(event.target as Node)
-      ) {
-        setIsMonthDropdownOpen(false);
-      }
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
@@ -140,36 +133,49 @@ export default function SubreceiveForm() {
     setSearchTerm("");
     setPaymentType("");
     setModalFiscalYear("");
-    setSelectedMonth("");
+    setSelectedMonths([]);
     setMonthSearchTerm("");
     setCurrentCustomer(null);
     setModalAmount(0);
   };
 
   // ฟังก์ชันบันทึกข้อมูลลง Sheet (ทำงานเมื่อกดปุ่ม "บันทึก" มุมขวาบน)
+  // ส่งทีละเดือน — แต่ละเดือนจะเป็น 1 แถวใน Sheet
   const handleSave = async () => {
-    if (!confirm("ยืนยันการบันทึกข้อมูล?")) return;
+    if (!confirm(`ยืนยันการบันทึกข้อมูล ${selectedMonths.length} เดือน?`))
+      return;
 
     setIsSaving(true);
     try {
-      const payload = {
-        ...formData,
-        selectedMonth, // ส่งเดือนที่เลือกไป
-        modalFiscalYear, // ส่งปีงบจาก Modal ไป
-        paymentType,
-      };
+      let successCount = 0;
+      let failCount = 0;
 
-      const res = await fetch("/api/save-payment", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      for (const month of selectedMonths) {
+        const payload = {
+          ...formData,
+          selectedMonth: month, // ส่งทีละเดือน
+          modalFiscalYear,
+          paymentType,
+        };
 
-      if (res.ok) {
-        alert("บันทึกข้อมูลสำเร็จ!");
-        handleClear(); // ล้างฟอร์มเมื่อสำเร็จ
+        const res = await fetch("/api/save-payment", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        if (res.ok) {
+          successCount++;
+        } else {
+          failCount++;
+        }
+      }
+
+      if (failCount === 0) {
+        alert(`บันทึกข้อมูลสำเร็จ ${successCount} เดือน!`);
+        handleClear();
       } else {
-        alert("เกิดข้อผิดพลาดในการบันทึก");
+        alert(`บันทึกสำเร็จ ${successCount} เดือน, ล้มเหลว ${failCount} เดือน`);
       }
     } catch (error) {
       console.error("Save error:", error);
@@ -210,20 +216,32 @@ export default function SubreceiveForm() {
     item.display.toLowerCase().includes(monthSearchTerm.toLowerCase()),
   );
 
+  const toggleMonth = (monthDisplay: string) => {
+    setSelectedMonths((prev) =>
+      prev.includes(monthDisplay)
+        ? prev.filter((m) => m !== monthDisplay)
+        : [...prev, monthDisplay],
+    );
+  };
+
+  const removeMonth = (monthDisplay: string) => {
+    setSelectedMonths((prev) => prev.filter((m) => m !== monthDisplay));
+  };
+
   const selectedAdmin = ADMIN_RECEIVERS.find(
     (r) => r.name === formData.adminReceiver,
   );
   const isCustomerDisabled = !formData.fiscalYear || isLoading;
 
-  // เงื่อนไขปุ่มบันทึก: ต้องกรอกฟอร์มครบ และต้องผ่านการเลือกเดือนใน Modal มาแล้ว (selectedMonth ต้องมีค่า)
+  // เงื่อนไขปุ่มบันทึก: ต้องกรอกฟอร์มครบ และต้องผ่านการเลือกเดือนใน Modal มาแล้ว
   const isFormValid =
     formData.fiscalYear !== "" &&
     formData.customerName !== "" &&
     formData.amount > 0 &&
     formData.adminReceiver !== "" &&
-    selectedMonth !== ""; // เพิ่มเงื่อนไขว่าต้องเลือกเดือนแล้ว
+    selectedMonths.length > 0;
 
-  const isModalValid = paymentType !== "" && selectedMonth !== "";
+  const isModalValid = paymentType !== "" && selectedMonths.length > 0;
 
   return (
     <>
@@ -488,11 +506,34 @@ export default function SubreceiveForm() {
             </label>
             <button
               onClick={() => setShowModal(true)}
-              // ถ้ายังไม่เลือกเดือน (selectedMonth) จะเปลี่ยนสีปุ่มให้ดูว่ายังทำไม่เสร็จ
-              className={`w-full font-medium py-3 rounded-lg border transition-colors ${selectedMonth ? "bg-teal-50 border-teal-500 text-teal-700" : "bg-white border-gray-300 text-gray-600 hover:bg-gray-50"}`}
+              className={`w-full font-medium py-3 rounded-lg border transition-colors ${selectedMonths.length > 0 ? "bg-teal-50 border-teal-500 text-teal-700" : "bg-white border-gray-300 text-gray-600 hover:bg-gray-50"}`}
             >
-              {selectedMonth ? `เลือกแล้ว: ${selectedMonth}` : "เลือก"}
+              {selectedMonths.length > 0
+                ? `เลือกแล้ว ${selectedMonths.length} เดือน`
+                : "เลือก"}
             </button>
+            {/* แสดงเดือนที่เลือกเป็น tags */}
+            {selectedMonths.length > 0 && (
+              <div className="flex flex-wrap gap-2 mt-1">
+                {selectedMonths.map((month) => (
+                  <span
+                    key={month}
+                    className="inline-flex items-center gap-1 px-3 py-1 bg-teal-50 text-teal-700 text-sm rounded-full border border-teal-200"
+                  >
+                    {month}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeMonth(month);
+                      }}
+                      className="ml-0.5 hover:text-red-500 transition-colors"
+                    >
+                      <X size={14} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -545,7 +586,7 @@ export default function SubreceiveForm() {
                       key={type}
                       onClick={() => {
                         setPaymentType(type);
-                        setSelectedMonth("");
+                        setSelectedMonths([]);
                         setMonthSearchTerm("");
                       }}
                       className={`w-full py-3 rounded-lg border font-medium transition-all ${paymentType === type ? "border-teal-500 bg-teal-50 text-teal-700 shadow-sm ring-1 ring-teal-500" : "border-gray-300 bg-white text-gray-500 hover:bg-gray-50 hover:border-gray-400"}`}
@@ -556,72 +597,83 @@ export default function SubreceiveForm() {
                 </div>
               </div>
 
-              {/* 2. เดือนที่รับชำระ */}
+              {/* 2. เดือนที่รับชำระ (Multi-select) */}
               {paymentType && (
                 <div
                   className="flex flex-col gap-2 animate-in fade-in slide-in-from-top-2 duration-300"
                   ref={monthDropdownRef}
                 >
-                  <label className="text-gray-600 font-medium">
-                    เดือนที่รับชำระ<span className="text-teal-500 ml-1">*</span>
-                  </label>
+                  <div className="flex items-center justify-between">
+                    <label className="text-gray-600 font-medium">
+                      เดือนที่รับชำระ
+                      <span className="text-teal-500 ml-1">*</span>
+                    </label>
+                    {selectedMonths.length > 0 && (
+                      <span className="text-xs text-teal-600 font-medium bg-teal-50 px-2 py-0.5 rounded-full">
+                        เลือกแล้ว {selectedMonths.length} เดือน
+                      </span>
+                    )}
+                  </div>
+                  {/* ช่องค้นหา */}
                   <div className="relative">
                     <input
                       type="text"
-                      placeholder="Search"
+                      placeholder="ค้นหาเดือน..."
                       className="text-gray-700 w-full border border-teal-500 rounded-lg px-3 py-2.5 pr-10 focus:outline-none focus:ring-2 focus:ring-teal-500 transition-colors bg-white shadow-sm"
-                      value={selectedMonth || monthSearchTerm}
-                      onChange={(e) => {
-                        setMonthSearchTerm(e.target.value);
-                        setSelectedMonth("");
-                        setIsMonthDropdownOpen(true);
-                      }}
-                      onFocus={() => {
-                        setMonthSearchTerm("");
-                        setIsMonthDropdownOpen(true);
-                      }}
+                      value={monthSearchTerm}
+                      onChange={(e) => setMonthSearchTerm(e.target.value)}
                     />
                     <div className="absolute right-3 top-3 text-gray-400 pointer-events-none">
-                      {isMonthDropdownOpen ? (
-                        <Search size={18} />
-                      ) : selectedMonth ? (
-                        <Check size={18} className="text-teal-500" />
-                      ) : (
-                        <ChevronDown size={18} />
-                      )}
+                      <Search size={18} />
                     </div>
-                    {isMonthDropdownOpen && (
-                      <ul className="absolute z-50 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-60 overflow-y-auto">
-                        {filteredMonths.length > 0 ? (
-                          filteredMonths.map((item, index) => (
-                            <li
-                              key={index}
-                              className="px-4 py-3 hover:bg-teal-50 cursor-pointer text-gray-700 border-b border-gray-100 last:border-0"
-                              onClick={() => {
-                                setSelectedMonth(item.display);
-                                setMonthSearchTerm("");
-                                setIsMonthDropdownOpen(false);
-                              }}
+                  </div>
+                  {/* รายการเดือน (แบบ toggle) */}
+                  <div className="border border-gray-200 rounded-lg overflow-hidden max-h-64 overflow-y-auto">
+                    {filteredMonths.length > 0 ? (
+                      filteredMonths.map((item, index) => {
+                        const isSelected = selectedMonths.includes(
+                          item.display,
+                        );
+                        return (
+                          <button
+                            key={index}
+                            type="button"
+                            onClick={() => toggleMonth(item.display)}
+                            className={`w-full flex items-center justify-between px-4 py-3 text-left border-b border-gray-100 last:border-0 transition-colors ${
+                              isSelected
+                                ? "bg-teal-50 text-teal-700"
+                                : "bg-white text-gray-700 hover:bg-gray-50"
+                            }`}
+                          >
+                            <span className="font-medium">{item.display}</span>
+                            <div
+                              className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
+                                isSelected
+                                  ? "bg-teal-500 border-teal-500"
+                                  : "border-gray-300"
+                              }`}
                             >
-                              {item.display}
-                            </li>
-                          ))
-                        ) : (
-                          <li className="px-4 py-3 text-center text-gray-400">
-                            ไม่พบข้อมูล
-                          </li>
-                        )}
-                      </ul>
+                              {isSelected && (
+                                <Check size={14} className="text-white" />
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })
+                    ) : (
+                      <div className="px-4 py-3 text-center text-gray-400">
+                        ไม่พบข้อมูล
+                      </div>
                     )}
                   </div>
                 </div>
               )}
 
               {/* 3. จำนวนเงินที่รับชำระในเดือนนี้ */}
-              {selectedMonth && (
+              {selectedMonths.length > 0 && (
                 <div className="flex flex-col gap-2 animate-in fade-in slide-in-from-top-3 duration-500">
                   <label className="text-gray-600 font-medium">
-                    จำนวนเงินที่รับชำระในเดือนนี้
+                    จำนวนเงินที่รับชำระ (ต่อเดือน)
                   </label>
                   <div className="relative">
                     <input
@@ -641,6 +693,13 @@ export default function SubreceiveForm() {
                       บาท
                     </div>
                   </div>
+                  {selectedMonths.length > 1 && (
+                    <p className="text-xs text-gray-400 text-center">
+                      รวมทั้งหมด {selectedMonths.length} เดือน ={" "}
+                      {(modalAmount * selectedMonths.length).toLocaleString()}{" "}
+                      บาท
+                    </p>
+                  )}
                 </div>
               )}
 
