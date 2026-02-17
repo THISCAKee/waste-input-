@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   X,
   Minus,
@@ -9,6 +9,9 @@ import {
   Search,
   Check,
   Loader2,
+  CheckCircle,
+  AlertTriangle,
+  XCircle,
 } from "lucide-react";
 
 // --- ข้อมูลคงที่ ---
@@ -83,6 +86,35 @@ export default function SubreceiveForm() {
   // --- Month Search State ---
   const [selectedMonths, setSelectedMonths] = useState<string[]>([]);
   const [monthSearchTerm, setMonthSearchTerm] = useState("");
+
+  // --- Popup State ---
+  const [popup, setPopup] = useState<{
+    show: boolean;
+    type: "success" | "error" | "confirm";
+    title: string;
+    message: string;
+    onConfirm?: () => void;
+  }>({ show: false, type: "success", title: "", message: "" });
+
+  const showPopup = useCallback(
+    (
+      type: "success" | "error" | "confirm",
+      title: string,
+      message: string,
+      onConfirm?: () => void,
+    ) => {
+      setPopup({ show: true, type, title, message, onConfirm });
+      // Auto-close success/error after 2.5 seconds
+      if (type !== "confirm") {
+        setTimeout(() => setPopup((p) => ({ ...p, show: false })), 2500);
+      }
+    },
+    [],
+  );
+
+  const closePopup = useCallback(() => {
+    setPopup((p) => ({ ...p, show: false }));
+  }, []);
   const monthDropdownRef = useRef<HTMLDivElement>(null);
 
   // --- Fetch Data ---
@@ -141,21 +173,22 @@ export default function SubreceiveForm() {
 
   // ฟังก์ชันบันทึกข้อมูลลง Sheet (ทำงานเมื่อกดปุ่ม "บันทึก" มุมขวาบน)
   // ส่งทีละเดือน — แต่ละเดือนจะเป็น 1 แถวใน Sheet
-  const handleSave = async () => {
-    if (!confirm(`ยืนยันการบันทึกข้อมูล ${selectedMonths.length} เดือน?`))
-      return;
-
+  const doSave = async () => {
     setIsSaving(true);
     try {
       let successCount = 0;
       let failCount = 0;
 
       for (const month of selectedMonths) {
+        // แยกชื่อเดือนและสถานะการชำระจาก display string เช่น "ตุลาคม(รับปกติ)"
+        const match = month.match(/^(.+)\((.+)\)$/);
+        const extractedType = match ? match[2] : paymentType;
+
         const payload = {
           ...formData,
           selectedMonth: month, // ส่งทีละเดือน
           modalFiscalYear,
-          paymentType,
+          paymentType: extractedType,
         };
 
         const res = await fetch("/api/save-payment", {
@@ -172,17 +205,34 @@ export default function SubreceiveForm() {
       }
 
       if (failCount === 0) {
-        alert(`บันทึกข้อมูลสำเร็จ ${successCount} เดือน!`);
+        showPopup(
+          "success",
+          "บันทึกสำเร็จ!",
+          `บันทึกข้อมูลสำเร็จ ${successCount} เดือน`,
+        );
         handleClear();
       } else {
-        alert(`บันทึกสำเร็จ ${successCount} เดือน, ล้มเหลว ${failCount} เดือน`);
+        showPopup(
+          "error",
+          "บันทึกไม่สมบูรณ์",
+          `สำเร็จ ${successCount} เดือน, ล้มเหลว ${failCount} เดือน`,
+        );
       }
     } catch (error) {
       console.error("Save error:", error);
-      alert("ไม่สามารถเชื่อมต่อกับระบบได้");
+      showPopup("error", "เกิดข้อผิดพลาด", "ไม่สามารถเชื่อมต่อกับระบบได้");
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const handleSave = () => {
+    showPopup(
+      "confirm",
+      "ยืนยันการบันทึก",
+      `ต้องการบันทึกข้อมูล ${selectedMonths.length} เดือน?`,
+      doSave,
+    );
   };
 
   const filteredCustomers = customers.filter((c) =>
@@ -581,19 +631,28 @@ export default function SubreceiveForm() {
                   สถานะการชำระ<span className="text-teal-500 ml-1">*</span>
                 </label>
                 <div className="flex flex-col gap-3">
-                  {["รับปกติ", "รับชำระลูกหนี้", "รับล่วงหน้า"].map((type) => (
-                    <button
-                      key={type}
-                      onClick={() => {
-                        setPaymentType(type);
-                        setSelectedMonths([]);
-                        setMonthSearchTerm("");
-                      }}
-                      className={`w-full py-3 rounded-lg border font-medium transition-all ${paymentType === type ? "border-teal-500 bg-teal-50 text-teal-700 shadow-sm ring-1 ring-teal-500" : "border-gray-300 bg-white text-gray-500 hover:bg-gray-50 hover:border-gray-400"}`}
-                    >
-                      {type}
-                    </button>
-                  ))}
+                  {["รับปกติ", "รับชำระลูกหนี้", "รับล่วงหน้า"].map((type) => {
+                    const countForType = selectedMonths.filter((m) =>
+                      m.endsWith(`(${type})`),
+                    ).length;
+                    return (
+                      <button
+                        key={type}
+                        onClick={() => {
+                          setPaymentType(type);
+                          setMonthSearchTerm("");
+                        }}
+                        className={`w-full py-3 rounded-lg border font-medium transition-all flex items-center justify-center gap-2 ${paymentType === type ? "border-teal-500 bg-teal-50 text-teal-700 shadow-sm ring-1 ring-teal-500" : "border-gray-300 bg-white text-gray-500 hover:bg-gray-50 hover:border-gray-400"}`}
+                      >
+                        {type}
+                        {countForType > 0 && (
+                          <span className="inline-flex items-center justify-center min-w-[22px] h-[22px] px-1 text-xs bg-teal-500 text-white rounded-full font-bold">
+                            {countForType}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -727,6 +786,91 @@ export default function SubreceiveForm() {
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+      {/* ================= Popup Alert ================= */}
+      {popup.show && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-200 p-4">
+          <div
+            className={`bg-white w-full max-w-sm rounded-2xl shadow-2xl p-6 flex flex-col items-center gap-4 animate-in zoom-in-95 duration-300 ${
+              popup.type === "success"
+                ? "ring-2 ring-emerald-100"
+                : popup.type === "error"
+                  ? "ring-2 ring-red-100"
+                  : "ring-2 ring-teal-100"
+            }`}
+          >
+            {/* Icon */}
+            <div
+              className={`w-16 h-16 rounded-full flex items-center justify-center ${
+                popup.type === "success"
+                  ? "bg-emerald-50"
+                  : popup.type === "error"
+                    ? "bg-red-50"
+                    : "bg-teal-50"
+              }`}
+            >
+              {popup.type === "success" && (
+                <CheckCircle className="text-emerald-500" size={36} />
+              )}
+              {popup.type === "error" && (
+                <XCircle className="text-red-500" size={36} />
+              )}
+              {popup.type === "confirm" && (
+                <AlertTriangle className="text-teal-500" size={36} />
+              )}
+            </div>
+
+            {/* Title */}
+            <h3
+              className={`text-lg font-semibold ${
+                popup.type === "success"
+                  ? "text-emerald-700"
+                  : popup.type === "error"
+                    ? "text-red-700"
+                    : "text-gray-800"
+              }`}
+            >
+              {popup.title}
+            </h3>
+
+            {/* Message */}
+            <p className="text-gray-500 text-center text-sm leading-relaxed">
+              {popup.message}
+            </p>
+
+            {/* Buttons */}
+            {popup.type === "confirm" ? (
+              <div className="flex gap-3 w-full mt-1">
+                <button
+                  onClick={closePopup}
+                  className="flex-1 py-2.5 rounded-xl border border-gray-300 text-gray-600 font-medium hover:bg-gray-50 transition-colors"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  onClick={() => {
+                    closePopup();
+                    popup.onConfirm?.();
+                  }}
+                  className="flex-1 py-2.5 rounded-xl bg-teal-500 text-white font-medium hover:bg-teal-600 transition-colors shadow-sm"
+                >
+                  ยืนยัน
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={closePopup}
+                className={`w-full py-2.5 rounded-xl font-medium transition-colors shadow-sm mt-1 ${
+                  popup.type === "success"
+                    ? "bg-emerald-500 text-white hover:bg-emerald-600"
+                    : "bg-red-500 text-white hover:bg-red-600"
+                }`}
+              >
+                ตกลง
+              </button>
+            )}
           </div>
         </div>
       )}
